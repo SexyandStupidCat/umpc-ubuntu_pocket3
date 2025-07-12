@@ -34,10 +34,10 @@ static const char *orientations[] = {
 };
 
 static const char *transforms[]  = {
+  "0 -1 1 1 0 0 0 0 1",
+  "0 1 0 -1 0 1 0 0 1",
   "1 0 0 0 1 0 0 0 1",
   "-1 0 1 0 -1 1 0 0 1",
-  "0 1 0 -1 0 1 0 0 1",
-  "0 -1 1 1 0 0 0 0 1",
   NULL
 };
 
@@ -49,7 +49,7 @@ static const char touchy[][48] = {
 };
 
 static const char screens[][8] = {
-  "DSI1"  //GPD Pocket 3 & TopJoy Falcon
+  "DSI-1"  //GPD Pocket 3 & TopJoy Falcon
 };
 
 #define RADIANS_TO_DEGREES 180.0/M_PI
@@ -62,54 +62,75 @@ static const char screens[][8] = {
 #define SCALE(a) ((int) ((double) in_##a * scale * 256.0 / 9.81))
 
 int orientation_changed(const double in_x, const double in_y, const double in_z,
-                        const double scale, int *current_orientation) {
-  int x, y, z;
-  int portrait_rotation;
-  int landscape_rotation;
-  int new_orientation = RIGHT;
+                        const double scale, int *current_orientation)
+{
+    int x, y, z;
+    double portrait_rotation, landscape_rotation;
+    int new_orientation = *current_orientation; // 先假设方向不变
 
-  /* this code expects 1G ~= 256 */
-  x = SCALE(x);
-  y = SCALE(y);
-  z = SCALE(z);
+    // 1. 数据标准化 (与之前相同)
+    // 假设 SCALE 宏在这里被调用
+    // x = SCALE(x);
+    // y = SCALE(y);
+    // z = SCALE(z);
+    // 为了能独立编译和测试，我们用假数据代替
+    x = (int)(in_x * scale * 256.0 / 9.81);
+    y = (int)(in_y * scale * 256.0 / 9.81);
+    z = (int)(in_z * scale * 256.0 / 9.81);
 
-  portrait_rotation  = round(atan2(x, sqrt(y * y + z * z)) * RADIANS_TO_DEGREES);
-  landscape_rotation = round(atan2(y, sqrt(x * x + z * z)) * RADIANS_TO_DEGREES);
 
-  /* Don't change orientation if we are on the common border of two thresholds */
-  if (abs(portrait_rotation) > THRESHOLD_PORTRAIT && abs(landscape_rotation) > THRESHOLD_LANDSCAPE) {
-    return 0;
-  }
+    // 2. 角度计算 (与之前相同)
+    portrait_rotation  = round(atan2(x, sqrt((double)y * y + (double)z * z)) * RADIANS_TO_DEGREES);
+    landscape_rotation = round(atan2(y, sqrt((double)x * x + (double)z * z)) * RADIANS_TO_DEGREES);
 
-  /* Portrait check */
-  if (abs(portrait_rotation) > THRESHOLD_PORTRAIT) {
-    new_orientation = (portrait_rotation > 0) ? RIGHT : LEFT;
+    // 3. 全新的、基于状态的决策逻辑
 
-    /* Some threshold to switching between portrait modes */
-    if (*current_orientation == RIGHT || *current_orientation == LEFT) {
-      if (abs(portrait_rotation) < SAME_AXIS_LIMIT) {
-        new_orientation = *current_orientation;
-      }
+    // 首先处理特殊情况：设备放在角落，姿态模糊，不做任何改变
+    if (abs(portrait_rotation) > THRESHOLD_PORTRAIT && abs(landscape_rotation) > THRESHOLD_LANDSCAPE) {
+        return 0;
     }
-  } else {
-    /* Landscape check */
-    if (abs(landscape_rotation) > THRESHOLD_LANDSCAPE) {
-      new_orientation = (landscape_rotation > 0) ? INVERTED : NORMAL;
 
-      /* Some threshold to switching between landscape modes */
-      if (*current_orientation == INVERTED || *current_orientation == NORMAL) {
-        if (abs(landscape_rotation) < SAME_AXIS_LIMIT) {
-          new_orientation = *current_orientation;
+    if (*current_orientation == LEFT || *current_orientation == RIGHT) {
+        // --- 当前处于竖屏模式 (LEFT/RIGHT) ---
+
+        // 条件1: 必须先回到接近水平的状态，才允许切换到横屏模式
+        // 这是解决您问题的关键！
+        if (abs(portrait_rotation) < SAME_AXIS_LIMIT) { // 角度小于5度，说明设备已基本放平
+            // 现在可以判断是否要切换到 NORMAL 或 INVERTED
+            if (abs(landscape_rotation) > THRESHOLD_LANDSCAPE) {
+                new_orientation = (landscape_rotation > 0) ? INVERTED : NORMAL;
+            }
         }
-      }
-    }
-  }
+        // 条件2: 如果仍在竖屏倾斜状态，仅检查是否需要从 LEFT 翻转到 RIGHT (或反之)
+        else {
+            if (abs(portrait_rotation) > THRESHOLD_PORTRAIT) {
+                 new_orientation = (portrait_rotation > 0) ? RIGHT : LEFT;
+            }
+        }
 
-  if (*current_orientation != new_orientation) {
-    *current_orientation = new_orientation;
-    return 1;
-  }
-  return 0;
+    } else { // 当前处于横屏模式 (NORMAL/INVERTED)
+
+        // --- 当前处于横屏模式 (NORMAL/INVERTED) ---
+
+        // 条件1: 只有当左右倾斜足够大时，才允许切换到竖屏模式
+        if (abs(portrait_rotation) > THRESHOLD_PORTRAIT) {
+            new_orientation = (portrait_rotation > 0) ? RIGHT : LEFT;
+        }
+        // 条件2: 如果仍在横屏状态，仅检查是否需要从 NORMAL 翻转到 INVERTED (或反之)
+        else {
+            if (abs(landscape_rotation) > THRESHOLD_LANDSCAPE) {
+                new_orientation = (landscape_rotation > 0) ? INVERTED : NORMAL;
+            }
+        }
+    }
+
+    // 4. 最终检查与更新 (与之前相同)
+    if (*current_orientation != new_orientation) {
+        *current_orientation = new_orientation;
+        return 1; // 方向已改变
+    }
+
+    return 0; // 方向未改变
 }
 
 char* concat(const char *s1, const char *s2) {
@@ -126,6 +147,8 @@ void rotate_touch(int orientation) {
   for (size_t i = 0; i < sizeof(touchy) / sizeof(touchy[0]); i++) {
     fprintf(stdout, "  Rotating Touch: %s (%s)\n", touchy[i], orientations[orientation]);
     sprintf(cmd, "xinput set-prop \"%s\" \"Coordinate Transformation Matrix\" %s 2>/dev/null", touchy[i], transforms[orientation]);
+    // sprintf(cmd, "xinput set-prop \"%s\" \"Coordinate Transformation Matrix\" %s 2>/dev/null", touchy[i], transforms[orientation]);
+    printf("%s\n", cmd);
     //fprintf(stderr, "  %s\n", cmd);
     int status = system(cmd);
   }
