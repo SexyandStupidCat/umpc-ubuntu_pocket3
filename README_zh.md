@@ -9,7 +9,7 @@
 
 # 更改
 
-1. 修改了umpc-display-rotate.c当中transforms的顺序，解决了新安装Ubuntu Mate触屏便宜问题
+1. 修改了umpc-display-rotate.c当中transforms的顺序，解决了新安装Ubuntu Mate触屏偏移问题
 
 2. 修改了上述文件中screens中的名字
 
